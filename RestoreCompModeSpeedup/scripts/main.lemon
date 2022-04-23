@@ -1,0 +1,259 @@
+global u8 speed_up
+
+function void Init()
+{
+	// Execute the original function
+	base.Init()
+}
+
+
+//# address-hook(0x005fb2) end(0x0067b4)
+function void MainGame()
+{
+@005fb2:
+#if STANDALONE
+	if (global.in_extra_stage == 0 && checkpoint.number == 0)
+	{
+		Standalone.onLevelStart()
+	}
+#endif
+
+	initializeMainGame()
+
+	if (competition_mode.active == 0)
+	{
+		// For any normal zone, except for AIZ 1 startup (for all characters):
+		// Start loading patterns
+		if (global.zone < 0x0e && (global.zone_act != 0x0000 || checkpoint.number != 0))
+		{
+			StartLoadingPatternsForZone()
+		}
+
+		palette_fade.range = 0x202f		// Only palette entries 0x10...0x3f
+		SetPaletteFadedOut()
+
+		global.fade_timer = 0x16
+		u16[0xffffb27e] = 0x16
+		control.pad1 = 0x7f00
+		control.pad2 = 0x7f00
+		checkpoint.number &= 0x7f
+		global.game_mode &= ~0x80
+
+		// Here comes the main game loop!
+		#if !STANDALONE
+		{
+			// We prefer to do a jump to asm here instead of executing the main loop in lemon script
+			jump 0x00650c
+		}
+		#endif
+
+		while (true)
+		{
+			UpdateGamePause()
+		@EntryPoint_GamePaused:
+
+			global.frame_state = 0x08
+			Kosinski.ProcessDecompressionQueue()
+
+			// End point for a single frame
+			//  -> Right here we place the entry point for the standalone version
+			waitForNextFrame()
+		@EntryPoint:
+
+			++level.framecounter
+
+		#if STANDALONE
+			// Try to process as much Kosinski decompression as possible
+			//  -> It's important to do this at the beginning of a frame, not at the end (like with the "Kosinski.ProcessModules()"),
+			//     otherwise Egg Robo sprites will get loaded too early in (at least) MHZ 2 and in MGZ 2 S/T boss with Knuckles
+			while (kosinski.queue_size + kosinski.waiting_modules > 0)
+			{
+				Kosinski.ProcessDecompressionQueue()
+				Kosinski.ProcessModules()
+			}
+		#endif
+
+			UpdateRollingDemo()
+			UpdatePaletteEffects()
+			UpdateSpecialScrolling()
+
+			DynamicObjectsLoading()
+			UpdateGameObjects()
+
+			if (level.restart)
+			{
+				jump @005fb2
+			}
+
+			UpdateCamera()
+			UpdateLevelDisplay()
+			UpdateWater()
+			UpdateListOfRingsAround()
+
+			if (global.zone == 0x09)
+			{
+				fn01cacc()
+			}
+
+			LevelTilesAnimation()
+			LoadRequiredSpritePatterns()
+
+			Kosinski.ProcessModules()
+
+			UpdateOscillatingNumbers()
+			UpdateGlobalRingAnimation()
+			RenderSprites()
+
+			if (global.zone == 0x15)	// Slot Machine bonus stage
+			{
+				BonusSM.RenderRotatingMaze()
+				BonusSM.UpdateSlotMachine()
+			}
+
+			// When game mode changed, get out of here
+			if (global.game_mode != 0x08 && global.game_mode != 0x0c)
+				return
+
+			if (global.game_mode == 0x08)
+			{
+				// Handling for rolling demo
+				if (level.restart || global.demo_countdown == 0)
+					break
+			}
+		}
+	}
+	else
+	{
+		// Competition mode
+		u16[0xffffff7e] = 0
+		
+		if ( speed_up == 1 )
+		{
+			u16[0xffffff7e] = 0x80 << 8
+		} 
+		else if ( speed_up == 2 ) 
+		{
+			u16[0xffffff7e] = 0xFF << 8
+		}		
+
+		palette_fade.range = 0x003f
+		SetPaletteFadedOut()
+		global.fade_timer = 0x16
+		u16[0xffffff7c] = 0
+		global.game_mode &= ~0x80
+
+		while (true)
+		{
+		// 0x006678:
+			UpdateGamePause()
+
+			global.frame_state = 0x08
+			Kosinski.ProcessDecompressionQueue()
+			waitForNextFrame()
+
+		@EntryPointCompetition:
+			++level.framecounter
+
+			u16 counter = 4
+			while (true)
+			{
+				UpdateRollingDemo()
+				UpdateGameObjects()
+				UpdateCamera()
+
+				--counter
+				if (counter == 0)
+					break
+
+				bool carry = (u32(u16[0xffffff7c]) + u16[0xffffff7e]) >= 0x10000
+				u16[0xffffff7c] += u16[0xffffff7e]
+				if (!carry)
+				{
+					--counter
+					if (counter == 0)
+						break
+				}
+
+			#if STANDALONE
+				// Run the loop only once per frame, and only to this point
+				//  -> The rest (in else-part) won't get executed on standalone
+				//break
+
+			#else
+
+				UpdateGamePause()
+
+				u16[0xa11100] = 0x0100
+				UpdateControllers()
+				u16[0xa11100] = 0
+
+				u16[0xfffffb00] = 0
+				u32[0xfffffbfc] = 0xfffffb00
+
+				for (A5 = 0xffffac00; A5 < 0xffffb000; A5 += 0x80)
+				{
+					u16[A5] = 0
+				}
+			#endif
+			}
+
+			if (level.restart != 0)
+			{
+				jump @005fb2
+			}
+
+			UpdateLevelDisplay()
+			LevelTilesAnimation()
+			RenderSprites()
+			UpdatePaletteEffects()
+			LoadRequiredSpritePatterns()
+			Kosinski.ProcessModules()
+
+			// When game mode changed, get out of here
+			if (global.game_mode != 0x08 && global.game_mode != 0x0c)
+				return
+
+			if (global.game_mode == 0x08)
+			{
+				// Handling for rolling demo
+				if (level.restart || global.demo_countdown == 0)
+					break
+			}
+		}
+	}
+
+	// The following is shared code for both cases (starting from 0x0065e0 and 0x00675c)
+	if (global.game_mode == 0x08)
+	{
+		global.game_mode = 0
+		return
+	}
+
+	// The rest here looks like it's dead code
+	assert(false, "Entered what is supposed to be dead code")
+
+	global.demo_countdown = 60
+	palette_fade.range = 0x003f
+	u16[0xfffff794] = 0
+
+	while (global.demo_countdown != 0)
+	{
+		global.frame_state = 0x08
+		waitForNextFrame()
+
+		UpdateRollingDemo()
+		UpdateGameObjects()
+		UpdateCamera()
+		UpdateLevelDisplay()
+		RenderSprites()
+		DynamicObjectsLoading()
+		Kosinski.ProcessModules()
+
+		--u16[0xfffff794]
+		if (s16[0xfffff794] < 0)
+		{
+			u16[0xfffff794] = 2
+			FadeOutPalette()
+		}
+	}
+}

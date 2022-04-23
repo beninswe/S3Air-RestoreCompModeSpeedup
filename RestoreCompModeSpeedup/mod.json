@@ -1,0 +1,30 @@
+{
+	"Metadata":
+	{
+		"Name": "Restore Competition Mode Speedup Ability",
+		"Author": "Ben In Sweden",
+		"Description": "Restores the ability to speed up competition mode from the original game",
+		"URL": "http://sonic3air.org",
+		"ModVersion": "0.0.1.0",
+		"GameVersion": "21.09.28.0"
+	},
+	
+	"Settings":
+	{
+		"List":
+  		[
+  			{
+  				"InternalName": "Speedup",
+  				"DisplayName": "Amount to Speedup",
+ 	 			"Variable": "speed_up",
+    	   		"DefaultValue": "0",
+  				"Options":
+  				{
+	  				"0": "No Speedup",
+					"1": "Half Speedup",
+  					"2": "Full Speedup"
+  				}
+  			}
+		]
+	}
+}
